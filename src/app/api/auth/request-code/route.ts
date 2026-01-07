@@ -17,11 +17,11 @@ export async function POST(request: NextRequest) {
     const normalizedPhone = normalizePhone(phone)
     const supabase = createAdminClient()
 
-    // Verifica se cliente existe e está ativo
+    // Verifica se cliente existe pelo telefone principal OU secundário
     const { data: client, error: clientError } = await supabase
       .from('clients')
-      .select('id, name, is_active')
-      .eq('phone', normalizedPhone)
+      .select('id, name, is_active, phone')
+      .or(`phone.eq.${normalizedPhone},secondary_phone.eq.${normalizedPhone}`)
       .single()
 
     if (clientError || !client) {

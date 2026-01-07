@@ -85,7 +85,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json()
-    const { name, company_name, phone, email, segment, start_date, monthly_goal, previous_annual_revenue } = body
+    const { name, company_name, phone, secondary_phone, email, segment, start_date, monthly_goal, previous_annual_revenue } = body
 
     if (!name || !company_name || !phone || !start_date) {
       return NextResponse.json(
@@ -95,6 +95,7 @@ export async function POST(request: NextRequest) {
     }
 
     const normalizedPhone = normalizePhone(phone)
+    const normalizedSecondaryPhone = secondary_phone ? normalizePhone(secondary_phone) : null
     const supabase = createAdminClient()
 
     // Verifica se telefone já existe
@@ -118,6 +119,7 @@ export async function POST(request: NextRequest) {
         name,
         company_name,
         phone: normalizedPhone,
+        secondary_phone: normalizedSecondaryPhone,
         email: email || null,
         segment: segment || null,
         start_date,
@@ -162,6 +164,11 @@ export async function PATCH(request: NextRequest) {
     // Normaliza telefone se estiver sendo atualizado
     if (updates.phone) {
       updates.phone = normalizePhone(updates.phone)
+    }
+
+    // Normaliza telefone secundário se estiver sendo atualizado
+    if (updates.secondary_phone !== undefined) {
+      updates.secondary_phone = updates.secondary_phone ? normalizePhone(updates.secondary_phone) : null
     }
 
     // Trata monthly_goal

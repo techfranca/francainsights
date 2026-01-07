@@ -9,6 +9,7 @@ export interface Client {
   company_name: string
   email: string | null
   phone: string
+  secondary_phone: string | null
   start_date: string
   segment: string | null
   current_level: number
@@ -157,6 +158,7 @@ export interface CreateClientData {
   name: string
   company_name: string
   phone: string
+  secondary_phone?: string
   email?: string
   segment?: string
   start_date: string

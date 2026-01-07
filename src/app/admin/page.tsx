@@ -36,6 +36,7 @@ interface ClientWithMetrics {
   name: string
   company_name: string
   phone: string
+  secondary_phone: string | null
   email: string | null
   segment: string | null
   start_date: string
@@ -85,6 +86,7 @@ export default function AdminPage() {
     name: '',
     company_name: '',
     phone: '',
+    secondary_phone: '',
     email: '',
     segment: '',
     start_date: new Date().toISOString().split('T')[0],
@@ -175,6 +177,7 @@ export default function AdminPage() {
         name: client.name,
         company_name: client.company_name,
         phone: formatPhone(client.phone),
+        secondary_phone: client.secondary_phone ? formatPhone(client.secondary_phone) : '',
         email: client.email || '',
         segment: client.segment || '',
         start_date: client.start_date,
@@ -186,6 +189,7 @@ export default function AdminPage() {
         name: '',
         company_name: '',
         phone: '',
+        secondary_phone: '',
         email: '',
         segment: '',
         start_date: new Date().toISOString().split('T')[0],
@@ -208,6 +212,7 @@ export default function AdminPage() {
       const payload = {
         ...clientForm,
         phone: cleanPhone(clientForm.phone),
+        secondary_phone: clientForm.secondary_phone ? cleanPhone(clientForm.secondary_phone) : null,
         email: clientForm.email || null,
         segment: clientForm.segment || null,
         monthly_goal: clientForm.monthly_goal ? parseFloat(clientForm.monthly_goal) : null,
@@ -837,6 +842,13 @@ export default function AdminPage() {
                   value={clientForm.phone}
                   onChange={(e) => setClientForm({ ...clientForm, phone: e.target.value })}
                   placeholder="(67) 99999-9999"
+                  icon={<Phone className="w-5 h-5" />}
+                />
+                <Input
+                  label="WhatsApp secundário (sócio)"
+                  value={clientForm.secondary_phone}
+                  onChange={(e) => setClientForm({ ...clientForm, secondary_phone: e.target.value })}
+                  placeholder="(67) 98888-8888"
                   icon={<Phone className="w-5 h-5" />}
                 />
                 <Input

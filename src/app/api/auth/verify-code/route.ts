@@ -49,11 +49,11 @@ export async function POST(request: NextRequest) {
       .update({ used: true })
       .eq('id', authCode.id)
 
-    // Busca dados do cliente
+    // Busca dados do cliente (telefone principal OU secundário)
     const { data: client, error: clientError } = await supabase
       .from('clients')
       .select('*')
-      .eq('phone', normalizedPhone)
+      .or(`phone.eq.${normalizedPhone},secondary_phone.eq.${normalizedPhone}`)
       .single()
 
     if (clientError || !client) {

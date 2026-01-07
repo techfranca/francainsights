@@ -4,7 +4,7 @@
   "description": "Dashboard de acompanhamento de resultados",
   "start_url": "/dashboard",
   "display": "standalone",
-  "background_color": "#081534",
+  "background_color": "#ffffff",
   "theme_color": "#081534",
   "orientation": "portrait-primary",
   "icons": [
