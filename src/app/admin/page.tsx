@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -16,6 +16,7 @@ import {
   X,
   Target,
   TrendingUp,
+  TrendingDown,
   Clock,
   BarChart3,
   ChevronRight,
@@ -25,11 +26,27 @@ import {
   Skull,
   ArrowLeft,
   PiggyBank,
+  Wallet,
+  Eye,
+  Trophy,
+  LineChart,
 } from 'lucide-react'
 import { Header, Sidebar, PageHeader } from '@/components/shared'
 import { Button, Input, Card, Spinner, Badge, Avatar } from '@/components/ui'
-import { formatCurrency, formatPhone, cleanPhone, SEGMENTS, formatMonthYear } from '@/lib/utils'
-import { MONTHS, formatPartnershipTime, calculatePartnershipMonths } from '@/types'
+import { formatCurrency, formatPhone, cleanPhone, formatMonthYear, formatMonthYearShort, getMonthName } from '@/lib/utils'
+import { MONTHS, formatPartnershipTime, calculatePartnershipMonths, SEGMENTS } from '@/types'
+import type { Client, MonthlyRecord, ChartData } from '@/types'
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  AreaChart,
+  Area,
+} from 'recharts'
 
 interface ClientWithMetrics {
   id: string
@@ -47,9 +64,10 @@ interface ClientWithMetrics {
   monthly_goal: number | null
   previous_annual_revenue: number | null
   monthly_access_count?: number
+  growth_percent?: number | null
 }
 
-interface MonthlyRecord {
+interface MonthlyRecordType {
   id: string
   client_id: string
   year: number
@@ -63,7 +81,22 @@ interface MonthlyRecord {
   submitted_at: string
 }
 
-type ModalType = 'client' | 'record' | 'goal' | 'deactivate' | 'delete' | 'editRecord' | null
+interface ConsolidatedData {
+  totalRevenue: number
+  totalActiveClients: number
+  totalClients: number
+  averageGrowth: number | null
+  clientsWithGrowthCount: number
+}
+
+interface ClientDashboardData {
+  client: Client
+  records: MonthlyRecord[]
+  achievements: any[]
+  achievementsCount: number
+}
+
+type ModalType = 'client' | 'record' | 'goal' | 'deactivate' | 'delete' | 'editRecord' | 'dashboard' | null
 
 export default function AdminPage() {
   const router = useRouter()
@@ -71,15 +104,23 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(true)
   const [clients, setClients] = useState<ClientWithMetrics[]>([])
   const [searchQuery, setSearchQuery] = useState('')
+  
+  // Dados consolidados
+  const [consolidated, setConsolidated] = useState<ConsolidatedData | null>(null)
+  const [loadingConsolidated, setLoadingConsolidated] = useState(true)
 
   // Cliente selecionado para ver detalhes
   const [selectedClient, setSelectedClient] = useState<ClientWithMetrics | null>(null)
-  const [clientRecords, setClientRecords] = useState<MonthlyRecord[]>([])
+  const [clientRecords, setClientRecords] = useState<MonthlyRecordType[]>([])
   const [loadingRecords, setLoadingRecords] = useState(false)
+
+  // Dashboard do cliente
+  const [clientDashboard, setClientDashboard] = useState<ClientDashboardData | null>(null)
+  const [loadingDashboard, setLoadingDashboard] = useState(false)
 
   // Modais
   const [activeModal, setActiveModal] = useState<ModalType>(null)
-  const [editingRecord, setEditingRecord] = useState<MonthlyRecord | null>(null)
+  const [editingRecord, setEditingRecord] = useState<MonthlyRecordType | null>(null)
 
   // Form de cliente
   const [clientForm, setClientForm] = useState({
@@ -119,7 +160,22 @@ export default function AdminPage() {
 
   useEffect(() => {
     loadClients()
+    loadConsolidated()
   }, [])
+
+  const loadConsolidated = async () => {
+    try {
+      const res = await fetch('/api/admin/consolidated')
+      if (res.ok) {
+        const data = await res.json()
+        setConsolidated(data)
+      }
+    } catch (error) {
+      console.error('Erro ao carregar consolidado:', error)
+    } finally {
+      setLoadingConsolidated(false)
+    }
+  }
 
   const loadClients = async () => {
     try {
@@ -156,6 +212,22 @@ export default function AdminPage() {
     }
   }
 
+  // Carregar dashboard do cliente
+  const loadClientDashboard = async (clientId: string) => {
+    setLoadingDashboard(true)
+    try {
+      const res = await fetch(`/api/admin/client-dashboard?client_id=${clientId}`)
+      if (res.ok) {
+        const data = await res.json()
+        setClientDashboard(data)
+      }
+    } catch (error) {
+      console.error('Erro ao carregar dashboard:', error)
+    } finally {
+      setLoadingDashboard(false)
+    }
+  }
+
   // Abrir detalhes do cliente
   const openClientDetails = async (client: ClientWithMetrics) => {
     setSelectedClient(client)
@@ -166,6 +238,13 @@ export default function AdminPage() {
   const closeClientDetails = () => {
     setSelectedClient(null)
     setClientRecords([])
+  }
+
+  // Abrir modal de dashboard
+  const openDashboardModal = async () => {
+    if (!selectedClient) return
+    setActiveModal('dashboard')
+    await loadClientDashboard(selectedClient.id)
   }
 
   // ============================================
@@ -242,8 +321,8 @@ export default function AdminPage() {
 
       setActiveModal(null)
       loadClients()
+      loadConsolidated()
       if (selectedClient) {
-        // Atualiza o cliente selecionado
         const updated = await res.json()
         setSelectedClient({ ...selectedClient, ...updated.client })
       }
@@ -306,6 +385,7 @@ export default function AdminPage() {
 
       setActiveModal(null)
       loadClients()
+      loadConsolidated()
       loadClientRecords(selectedClient.id)
     } catch (error) {
       console.error('Erro:', error)
@@ -318,7 +398,7 @@ export default function AdminPage() {
   // ============================================
   // MODAL DE EDIÇÃO DE REGISTRO
   // ============================================
-  const openEditRecordModal = (record: MonthlyRecord) => {
+  const openEditRecordModal = (record: MonthlyRecordType) => {
     setEditingRecord(record)
     setEditRecordForm({
       revenue: record.revenue.toString(),
@@ -361,6 +441,7 @@ export default function AdminPage() {
       setActiveModal(null)
       setEditingRecord(null)
       loadClients()
+      loadConsolidated()
       if (selectedClient) {
         loadClientRecords(selectedClient.id)
       }
@@ -384,6 +465,7 @@ export default function AdminPage() {
         return
       }
       loadClients()
+      loadConsolidated()
       if (selectedClient) {
         loadClientRecords(selectedClient.id)
       }
@@ -441,11 +523,9 @@ export default function AdminPage() {
 
     try {
       if (selectedClient.is_active) {
-        // Desativar
         const res = await fetch(`/api/clients?id=${selectedClient.id}`, { method: 'DELETE' })
         if (!res.ok) throw new Error('Erro ao desativar')
       } else {
-        // Reativar
         const res = await fetch('/api/clients', {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
@@ -456,6 +536,7 @@ export default function AdminPage() {
 
       setActiveModal(null)
       loadClients()
+      loadConsolidated()
       setSelectedClient({ ...selectedClient, is_active: !selectedClient.is_active })
     } catch (error: any) {
       alert(error?.message || 'Erro ao alterar status')
@@ -481,6 +562,7 @@ export default function AdminPage() {
       setActiveModal(null)
       closeClientDetails()
       loadClients()
+      loadConsolidated()
     } catch (error: any) {
       alert(error?.message || 'Erro ao excluir cliente')
     } finally {
@@ -492,6 +574,7 @@ export default function AdminPage() {
     if (saving || deleting) return
     setActiveModal(null)
     setEditingRecord(null)
+    setClientDashboard(null)
   }
 
   const years = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i)
@@ -501,6 +584,61 @@ export default function AdminPage() {
       c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       c.company_name.toLowerCase().includes(searchQuery.toLowerCase())
   )
+
+  // ============================================
+  // CÁLCULOS DO DASHBOARD DO CLIENTE
+  // ============================================
+  const dashboardMetrics = useMemo(() => {
+    if (!clientDashboard) return null
+
+    const { client, records } = clientDashboard
+
+    const totalRevenue = records.reduce((sum, r) => sum + r.revenue, 0)
+    const totalSales = records.reduce((sum, r) => sum + (r.sales_count || 0), 0)
+    const avgRevenue = records.length > 0 ? totalRevenue / records.length : 0
+    const avgSales = records.length > 0 ? totalSales / records.length : 0
+
+    const bestRecord = records.length > 0
+      ? records.reduce((best, r) => r.revenue > best.revenue ? r : best, records[0])
+      : null
+
+    let totalGrowthPercent: number | null = null
+    if (records.length >= 2) {
+      const sortedRecords = [...records].sort((a, b) => {
+        if (a.year !== b.year) return a.year - b.year
+        return a.month - b.month
+      })
+      const firstRecord = sortedRecords[0]
+      const lastRecord = sortedRecords[sortedRecords.length - 1]
+      if (firstRecord.revenue > 0) {
+        totalGrowthPercent = ((lastRecord.revenue - firstRecord.revenue) / firstRecord.revenue) * 100
+      }
+    }
+
+    const partnershipMonths = calculatePartnershipMonths(client.start_date)
+
+    // Prepara dados do gráfico (últimos 12 meses)
+    const chartData = records
+      .slice(0, 12)
+      .reverse()
+      .map((r) => ({
+        name: formatMonthYearShort(r.month, r.year),
+        revenue: r.revenue,
+        salesCount: r.sales_count ?? 0,
+        investment: r.investment ?? 0,
+      }))
+
+    return {
+      totalRevenue,
+      avgRevenue,
+      avgSales,
+      bestRecord,
+      totalGrowthPercent,
+      partnershipMonths,
+      chartData,
+      totalMonths: records.length,
+    }
+  }, [clientDashboard])
 
   if (loading) {
     return (
@@ -614,6 +752,10 @@ export default function AdminPage() {
 
                   {/* Botões de ação */}
                   <div className="flex flex-wrap gap-2 mt-6 pt-4 border-t">
+                    <Button size="sm" onClick={openDashboardModal} className="bg-franca-blue hover:bg-franca-blue-dark text-white">
+                      <Eye className="w-4 h-4" />
+                      Ver Dashboard
+                    </Button>
                     <Button size="sm" variant="outline" onClick={() => openClientModal(selectedClient)}>
                       <Edit className="w-4 h-4" />
                       Editar
@@ -718,6 +860,85 @@ export default function AdminPage() {
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: 20 }}
               >
+                {/* SEÇÃO CONSOLIDADO */}
+                <section className="mb-8">
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="p-2 bg-franca-green/10 rounded-xl text-franca-green">
+                      <BarChart3 className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h2 className="text-lg font-semibold text-franca-blue">Consolidado</h2>
+                      <p className="text-sm text-gray-500">Visão geral de todos os clientes</p>
+                    </div>
+                  </div>
+
+                  {loadingConsolidated ? (
+                    <div className="flex justify-center py-8">
+                      <Spinner />
+                    </div>
+                  ) : consolidated ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                      {/* Card Faturamento Total */}
+                      <Card className="p-5 bg-gradient-to-br from-franca-green/5 to-franca-green/10 border-franca-green/20">
+                        <div className="flex items-start justify-between mb-3">
+                          <p className="text-sm font-medium text-gray-600">Faturamento Total</p>
+                          <div className="p-2 bg-franca-green/20 rounded-xl">
+                            <Wallet className="w-5 h-5 text-franca-green" />
+                          </div>
+                        </div>
+                        <p className="text-2xl sm:text-3xl font-bold text-franca-blue">
+                          {formatCurrency(consolidated.totalRevenue)}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-1">
+                          De {consolidated.totalClients} clientes
+                        </p>
+                      </Card>
+
+                      {/* Card Crescimento Médio */}
+                      <Card className={`p-5 ${consolidated.averageGrowth !== null && consolidated.averageGrowth >= 0 ? 'bg-gradient-to-br from-emerald-50 to-emerald-100 border-emerald-200' : 'bg-gradient-to-br from-red-50 to-red-100 border-red-200'}`}>
+                        <div className="flex items-start justify-between mb-3">
+                          <p className="text-sm font-medium text-gray-600">Crescimento Médio</p>
+                          <div className={`p-2 rounded-xl ${consolidated.averageGrowth !== null && consolidated.averageGrowth >= 0 ? 'bg-emerald-200' : 'bg-red-200'}`}>
+                            {consolidated.averageGrowth !== null && consolidated.averageGrowth >= 0 ? (
+                              <TrendingUp className="w-5 h-5 text-emerald-600" />
+                            ) : (
+                              <TrendingDown className="w-5 h-5 text-red-600" />
+                            )}
+                          </div>
+                        </div>
+                        <p className={`text-2xl sm:text-3xl font-bold ${consolidated.averageGrowth !== null && consolidated.averageGrowth >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                          {consolidated.averageGrowth !== null 
+                            ? `${consolidated.averageGrowth >= 0 ? '+' : ''}${consolidated.averageGrowth.toFixed(1)}%`
+                            : 'N/A'
+                          }
+                        </p>
+                        <p className="text-xs text-gray-500 mt-1">
+                          {consolidated.clientsWithGrowthCount > 0 
+                            ? `Baseado em ${consolidated.clientsWithGrowthCount} clientes com 2+ registros`
+                            : 'Necessário 2+ registros para calcular'
+                          }
+                        </p>
+                      </Card>
+
+                      {/* Card Clientes Ativos */}
+                      <Card className="p-5 bg-gradient-to-br from-franca-blue/5 to-franca-blue/10 border-franca-blue/20">
+                        <div className="flex items-start justify-between mb-3">
+                          <p className="text-sm font-medium text-gray-600">Clientes Ativos</p>
+                          <div className="p-2 bg-franca-blue/20 rounded-xl">
+                            <Users className="w-5 h-5 text-franca-blue" />
+                          </div>
+                        </div>
+                        <p className="text-2xl sm:text-3xl font-bold text-franca-blue">
+                          {consolidated.totalActiveClients}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-1">
+                          De {consolidated.totalClients} cadastrados
+                        </p>
+                      </Card>
+                    </div>
+                  ) : null}
+                </section>
+
                 <PageHeader
                   title="Clientes"
                   subtitle={`${clients.length} clientes cadastrados`}
@@ -770,9 +991,21 @@ export default function AdminPage() {
                               <span className="text-xs text-franca-green font-medium">
                                 {formatCurrency(client.total_revenue)}
                               </span>
-                              <span className="text-xs text-gray-400">
-                                {client.total_records} reg.
-                              </span>
+                              <div className="flex items-center gap-2">
+                                {client.growth_percent !== null && client.growth_percent !== undefined && (
+                                  <span className={`text-xs font-medium flex items-center gap-0.5 ${client.growth_percent >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                                    {client.growth_percent >= 0 ? (
+                                      <TrendingUp className="w-3 h-3" />
+                                    ) : (
+                                      <TrendingDown className="w-3 h-3" />
+                                    )}
+                                    {client.growth_percent >= 0 ? '+' : ''}{client.growth_percent.toFixed(0)}%
+                                  </span>
+                                )}
+                                <span className="text-xs text-gray-400">
+                                  {client.total_records} reg.
+                                </span>
+                              </div>
                             </div>
                           </div>
                           <ChevronRight className="w-4 h-4 text-gray-400 flex-shrink-0" />
@@ -798,6 +1031,268 @@ export default function AdminPage() {
           MODAIS
       ========================================== */}
 
+      {/* MODAL DE DASHBOARD DO CLIENTE */}
+      <AnimatePresence>
+        {activeModal === 'dashboard' && selectedClient && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-2 sm:p-4"
+            onClick={closeModal}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-gray-50 rounded-2xl shadow-xl w-full max-w-5xl max-h-[90vh] overflow-hidden flex flex-col"
+            >
+              {/* Header do Modal */}
+              <div className="flex items-center justify-between p-4 sm:p-5 border-b bg-white">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-franca-blue/10 rounded-xl">
+                    <BarChart3 className="w-5 h-5 text-franca-blue" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-bold text-franca-blue">{selectedClient.name}</h2>
+                    <p className="text-sm text-gray-500">{selectedClient.company_name}</p>
+                  </div>
+                </div>
+                <button onClick={closeModal} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Conteúdo do Dashboard */}
+              <div className="flex-1 overflow-y-auto p-4 sm:p-6">
+                {loadingDashboard ? (
+                  <div className="flex items-center justify-center py-20">
+                    <Spinner size="lg" />
+                  </div>
+                ) : clientDashboard && dashboardMetrics ? (
+                  <div className="space-y-6">
+                    {/* Métricas principais */}
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+                      <Card className="p-4">
+                        <div className="flex items-center justify-between mb-2">
+                          <p className="text-xs text-gray-500">Total Acumulado</p>
+                          <div className="p-1.5 bg-franca-green/10 rounded-lg">
+                            <Wallet className="w-4 h-4 text-franca-green" />
+                          </div>
+                        </div>
+                        <p className="text-xl sm:text-2xl font-bold text-franca-blue">
+                          {formatCurrency(dashboardMetrics.totalRevenue)}
+                        </p>
+                      </Card>
+
+                      <Card className="p-4">
+                        <div className="flex items-center justify-between mb-2">
+                          <p className="text-xs text-gray-500">Média Mensal</p>
+                          <div className="p-1.5 bg-franca-green/10 rounded-lg">
+                            <TrendingUp className="w-4 h-4 text-franca-green" />
+                          </div>
+                        </div>
+                        <p className="text-xl sm:text-2xl font-bold text-franca-blue">
+                          {formatCurrency(dashboardMetrics.avgRevenue)}
+                        </p>
+                      </Card>
+
+                      <Card className="p-4">
+                        <div className="flex items-center justify-between mb-2">
+                          <p className="text-xs text-gray-500">Crescimento Total</p>
+                          <div className={`p-1.5 rounded-lg ${dashboardMetrics.totalGrowthPercent !== null && dashboardMetrics.totalGrowthPercent >= 0 ? 'bg-emerald-100' : 'bg-red-100'}`}>
+                            {dashboardMetrics.totalGrowthPercent !== null && dashboardMetrics.totalGrowthPercent >= 0 ? (
+                              <TrendingUp className="w-4 h-4 text-emerald-600" />
+                            ) : (
+                              <TrendingDown className="w-4 h-4 text-red-500" />
+                            )}
+                          </div>
+                        </div>
+                        <p className={`text-xl sm:text-2xl font-bold ${dashboardMetrics.totalGrowthPercent !== null && dashboardMetrics.totalGrowthPercent >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                          {dashboardMetrics.totalGrowthPercent !== null 
+                            ? `${dashboardMetrics.totalGrowthPercent >= 0 ? '+' : ''}${dashboardMetrics.totalGrowthPercent.toFixed(1)}%`
+                            : 'N/A'
+                          }
+                        </p>
+                      </Card>
+
+                      <Card className="p-4">
+                        <div className="flex items-center justify-between mb-2">
+                          <p className="text-xs text-gray-500">Parceria</p>
+                          <div className="p-1.5 bg-franca-blue/10 rounded-lg">
+                            <Clock className="w-4 h-4 text-franca-blue" />
+                          </div>
+                        </div>
+                        <p className="text-xl sm:text-2xl font-bold text-franca-blue">
+                          {formatPartnershipTime(dashboardMetrics.partnershipMonths)}
+                        </p>
+                      </Card>
+                    </div>
+
+                    {/* Recorde */}
+                    {dashboardMetrics.bestRecord && (
+                      <Card className="p-4 bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-400 text-white">
+                        <div className="flex items-center gap-4">
+                          <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center">
+                            <Trophy className="w-6 h-6 text-white" />
+                          </div>
+                          <div>
+                            <p className="text-xs font-bold uppercase tracking-wider text-white/70">Melhor Resultado</p>
+                            <p className="text-2xl font-bold">{formatCurrency(dashboardMetrics.bestRecord.revenue)}</p>
+                            <p className="text-sm text-white/70">
+                              {formatMonthYear(dashboardMetrics.bestRecord.month, dashboardMetrics.bestRecord.year)}
+                            </p>
+                          </div>
+                        </div>
+                      </Card>
+                    )}
+
+                    {/* Gráfico de Faturamento */}
+                    {dashboardMetrics.chartData.length > 1 && (
+                      <Card className="p-4 sm:p-5">
+                        <div className="flex items-center justify-between mb-4">
+                          <div className="flex items-center gap-2">
+                            <div className="p-2 bg-franca-green/10 rounded-lg">
+                              <BarChart3 className="w-4 h-4 text-franca-green" />
+                            </div>
+                            <h3 className="font-semibold text-franca-blue">Evolução do Faturamento</h3>
+                          </div>
+                          <span className="text-xs text-gray-400 bg-gray-100 px-2 py-1 rounded-md">
+                            {dashboardMetrics.chartData.length} meses
+                          </span>
+                        </div>
+                        <div className="h-64">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <BarChart data={dashboardMetrics.chartData} margin={{ top: 5, right: 5, left: -15, bottom: 5 }}>
+                              <defs>
+                                <linearGradient id="adminRevenueGradient" x1="0" y1="0" x2="0" y2="1">
+                                  <stop offset="0%" stopColor="#7DE08D" stopOpacity={1} />
+                                  <stop offset="100%" stopColor="#5ea86a" stopOpacity={0.85} />
+                                </linearGradient>
+                              </defs>
+                              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                              <XAxis
+                                dataKey="name"
+                                axisLine={false}
+                                tickLine={false}
+                                tick={{ fill: '#94a3b8', fontSize: 10 }}
+                                dy={8}
+                              />
+                              <YAxis
+                                axisLine={false}
+                                tickLine={false}
+                                tick={{ fill: '#94a3b8', fontSize: 10 }}
+                                tickFormatter={(value) => {
+                                  if (value >= 1000000) return `${(value / 1000000).toFixed(1)}M`
+                                  if (value >= 1000) return `${(value / 1000).toFixed(0)}K`
+                                  return value.toString()
+                                }}
+                                dx={-5}
+                              />
+                              <Tooltip
+                                content={({ active, payload, label }) => {
+                                  if (active && payload && payload.length) {
+                                    return (
+                                      <div className="bg-franca-blue text-white px-4 py-3 rounded-xl shadow-lg">
+                                        <p className="text-xs text-white/60 mb-1">{label}</p>
+                                        <p className="text-lg font-bold">{formatCurrency(payload[0].value as number)}</p>
+                                      </div>
+                                    )
+                                  }
+                                  return null
+                                }}
+                                cursor={{ fill: 'rgba(125, 224, 141, 0.1)' }}
+                              />
+                              <Bar
+                                dataKey="revenue"
+                                fill="url(#adminRevenueGradient)"
+                                radius={[4, 4, 0, 0]}
+                                maxBarSize={36}
+                              />
+                            </BarChart>
+                          </ResponsiveContainer>
+                        </div>
+                      </Card>
+                    )}
+
+                    {/* Gráfico de Vendas */}
+                    {dashboardMetrics.chartData.some(d => d.salesCount > 0) && (
+                      <Card className="p-4 sm:p-5">
+                        <div className="flex items-center justify-between mb-4">
+                          <div className="flex items-center gap-2">
+                            <div className="p-2 bg-franca-blue/10 rounded-lg">
+                              <LineChart className="w-4 h-4 text-franca-blue" />
+                            </div>
+                            <h3 className="font-semibold text-franca-blue">Evolução de Vendas</h3>
+                          </div>
+                        </div>
+                        <div className="h-56">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <AreaChart data={dashboardMetrics.chartData} margin={{ top: 5, right: 5, left: -15, bottom: 5 }}>
+                              <defs>
+                                <linearGradient id="adminSalesGradient" x1="0" y1="0" x2="0" y2="1">
+                                  <stop offset="0%" stopColor="#081534" stopOpacity={0.2} />
+                                  <stop offset="100%" stopColor="#081534" stopOpacity={0} />
+                                </linearGradient>
+                              </defs>
+                              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                              <XAxis
+                                dataKey="name"
+                                axisLine={false}
+                                tickLine={false}
+                                tick={{ fill: '#94a3b8', fontSize: 10 }}
+                                dy={8}
+                              />
+                              <YAxis
+                                axisLine={false}
+                                tickLine={false}
+                                tick={{ fill: '#94a3b8', fontSize: 10 }}
+                                dx={-5}
+                              />
+                              <Tooltip
+                                content={({ active, payload, label }) => {
+                                  if (active && payload && payload.length) {
+                                    return (
+                                      <div className="bg-franca-blue text-white px-4 py-3 rounded-xl shadow-lg">
+                                        <p className="text-xs text-white/60 mb-1">{label}</p>
+                                        <p className="text-lg font-bold">{payload[0].value} vendas</p>
+                                      </div>
+                                    )
+                                  }
+                                  return null
+                                }}
+                              />
+                              <Area
+                                type="monotone"
+                                dataKey="salesCount"
+                                stroke="#081534"
+                                strokeWidth={2.5}
+                                fill="url(#adminSalesGradient)"
+                                dot={{ fill: '#081534', strokeWidth: 0, r: 3 }}
+                                activeDot={{ fill: '#081534', strokeWidth: 0, r: 5 }}
+                              />
+                            </AreaChart>
+                          </ResponsiveContainer>
+                        </div>
+                      </Card>
+                    )}
+
+                    {/* Sem dados */}
+                    {dashboardMetrics.totalMonths === 0 && (
+                      <div className="text-center py-12">
+                        <BarChart3 className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+                        <p className="text-gray-500">Nenhum registro encontrado para este cliente</p>
+                      </div>
+                    )}
+                  </div>
+                ) : null}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* MODAL DE CLIENTE */}
       <AnimatePresence>
         {activeModal === 'client' && (
@@ -813,7 +1308,7 @@ export default function AdminPage() {
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
               onClick={(e) => e.stopPropagation()}
-              className="bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto"
+              className="bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[85vh] overflow-hidden flex flex-col"
             >
               <div className="flex items-center justify-between p-5 border-b">
                 <h2 className="text-lg font-bold text-franca-blue">
@@ -824,31 +1319,39 @@ export default function AdminPage() {
                 </button>
               </div>
 
-              <div className="p-5 space-y-4">
+              <div className="flex-1 overflow-y-auto p-5 space-y-4">
                 <Input
-                  label="Nome completo *"
+                  label="Nome do responsável *"
                   value={clientForm.name}
                   onChange={(e) => setClientForm({ ...clientForm, name: e.target.value })}
                   placeholder="João Silva"
+                  icon={<Users className="w-5 h-5" />}
                 />
                 <Input
                   label="Nome da empresa *"
                   value={clientForm.company_name}
                   onChange={(e) => setClientForm({ ...clientForm, company_name: e.target.value })}
-                  placeholder="Clínica Exemplo"
+                  placeholder="Empresa LTDA"
+                  icon={<Building2 className="w-5 h-5" />}
                 />
                 <Input
-                  label="WhatsApp *"
+                  label="Telefone principal *"
                   value={clientForm.phone}
-                  onChange={(e) => setClientForm({ ...clientForm, phone: e.target.value })}
-                  placeholder="(67) 99999-9999"
+                  onChange={(e) => {
+                    const formatted = formatPhone(e.target.value)
+                    setClientForm({ ...clientForm, phone: formatted })
+                  }}
+                  placeholder="(11) 99999-9999"
                   icon={<Phone className="w-5 h-5" />}
                 />
                 <Input
-                  label="WhatsApp secundário (sócio)"
+                  label="Telefone secundário"
                   value={clientForm.secondary_phone}
-                  onChange={(e) => setClientForm({ ...clientForm, secondary_phone: e.target.value })}
-                  placeholder="(67) 98888-8888"
+                  onChange={(e) => {
+                    const formatted = formatPhone(e.target.value)
+                    setClientForm({ ...clientForm, secondary_phone: formatted })
+                  }}
+                  placeholder="(11) 99999-9999"
                   icon={<Phone className="w-5 h-5" />}
                 />
                 <Input
@@ -856,7 +1359,7 @@ export default function AdminPage() {
                   type="email"
                   value={clientForm.email}
                   onChange={(e) => setClientForm({ ...clientForm, email: e.target.value })}
-                  placeholder="joao@exemplo.com"
+                  placeholder="email@exemplo.com"
                   icon={<Mail className="w-5 h-5" />}
                 />
                 <div>
@@ -864,7 +1367,7 @@ export default function AdminPage() {
                   <select
                     value={clientForm.segment}
                     onChange={(e) => setClientForm({ ...clientForm, segment: e.target.value })}
-                    className="w-full px-4 py-2.5 rounded-xl border-2 border-gray-200 bg-white text-franca-blue focus:outline-none focus:border-franca-green text-sm"
+                    className="w-full px-3 py-2.5 rounded-xl border-2 border-gray-200 bg-white text-franca-blue focus:outline-none focus:border-franca-green text-sm"
                   >
                     <option value="">Selecione...</option>
                     {SEGMENTS.map((seg) => (
@@ -877,6 +1380,7 @@ export default function AdminPage() {
                   type="date"
                   value={clientForm.start_date}
                   onChange={(e) => setClientForm({ ...clientForm, start_date: e.target.value })}
+                  icon={<Calendar className="w-5 h-5" />}
                 />
                 <Input
                   label="Meta mensal (R$)"
@@ -886,26 +1390,19 @@ export default function AdminPage() {
                   placeholder="50000"
                   icon={<Target className="w-5 h-5" />}
                 />
-                <div className="p-3 bg-franca-green/5 rounded-xl border border-franca-green/20">
-                  <Input
-                    label="Faturamento anual anterior (R$)"
-                    type="number"
-                    value={clientForm.previous_annual_revenue}
-                    onChange={(e) => setClientForm({ ...clientForm, previous_annual_revenue: e.target.value })}
-                    placeholder="600000"
-                    icon={<BarChart3 className="w-5 h-5" />}
-                  />
-                  <p className="text-xs text-gray-500 mt-2">
-                    Usado para comparar antes/depois da parceria.
-                  </p>
-                </div>
+                <Input
+                  label="Faturamento anual anterior (R$)"
+                  type="number"
+                  value={clientForm.previous_annual_revenue}
+                  onChange={(e) => setClientForm({ ...clientForm, previous_annual_revenue: e.target.value })}
+                  placeholder="600000"
+                  icon={<DollarSign className="w-5 h-5" />}
+                />
               </div>
 
               <div className="flex gap-3 p-5 border-t">
                 <Button variant="outline" className="flex-1" onClick={closeModal}>Cancelar</Button>
-                <Button className="flex-1" onClick={handleSaveClient} loading={saving}>
-                  {selectedClient ? 'Salvar' : 'Cadastrar'}
-                </Button>
+                <Button className="flex-1" onClick={handleSaveClient} loading={saving}>Salvar</Button>
               </div>
             </motion.div>
           </motion.div>
@@ -932,7 +1429,7 @@ export default function AdminPage() {
               <div className="flex items-center justify-between p-5 border-b">
                 <div>
                   <h2 className="text-lg font-bold text-franca-blue">Novo Registro</h2>
-                  <p className="text-xs text-gray-500">{selectedClient.company_name}</p>
+                  <p className="text-sm text-gray-500">{selectedClient.company_name}</p>
                 </div>
                 <button onClick={closeModal} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
                   <X className="w-5 h-5" />
@@ -942,26 +1439,26 @@ export default function AdminPage() {
               <div className="p-5 space-y-4">
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-sm font-medium text-franca-blue mb-1.5">Ano *</label>
-                    <select
-                      value={recordForm.year}
-                      onChange={(e) => setRecordForm({ ...recordForm, year: parseInt(e.target.value) })}
-                      className="w-full px-3 py-2.5 rounded-xl border-2 border-gray-200 bg-white text-franca-blue focus:outline-none focus:border-franca-green text-sm"
-                    >
-                      {years.map((year) => (
-                        <option key={year} value={year}>{year}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-franca-blue mb-1.5">Mês *</label>
+                    <label className="block text-sm font-medium text-franca-blue mb-1.5">Mês</label>
                     <select
                       value={recordForm.month}
                       onChange={(e) => setRecordForm({ ...recordForm, month: parseInt(e.target.value) })}
                       className="w-full px-3 py-2.5 rounded-xl border-2 border-gray-200 bg-white text-franca-blue focus:outline-none focus:border-franca-green text-sm"
                     >
-                      {MONTHS.map((monthName, index) => (
-                        <option key={index} value={index}>{monthName}</option>
+                      {MONTHS.map((m, i) => (
+                        <option key={i} value={i}>{m}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-franca-blue mb-1.5">Ano</label>
+                    <select
+                      value={recordForm.year}
+                      onChange={(e) => setRecordForm({ ...recordForm, year: parseInt(e.target.value) })}
+                      className="w-full px-3 py-2.5 rounded-xl border-2 border-gray-200 bg-white text-franca-blue focus:outline-none focus:border-franca-green text-sm"
+                    >
+                      {years.map((y) => (
+                        <option key={y} value={y}>{y}</option>
                       ))}
                     </select>
                   </div>
@@ -996,7 +1493,7 @@ export default function AdminPage() {
                   <textarea
                     value={recordForm.notes}
                     onChange={(e) => setRecordForm({ ...recordForm, notes: e.target.value })}
-                    placeholder="Alguma observação..."
+                    placeholder="Observações..."
                     rows={2}
                     className="w-full px-3 py-2.5 rounded-xl border-2 border-gray-200 bg-white text-franca-blue focus:outline-none focus:border-franca-green resize-none text-sm"
                   />
@@ -1005,7 +1502,7 @@ export default function AdminPage() {
 
               <div className="flex gap-3 p-5 border-t">
                 <Button variant="outline" className="flex-1" onClick={closeModal}>Cancelar</Button>
-                <Button className="flex-1" onClick={handleSaveRecord} loading={saving}>Registrar</Button>
+                <Button className="flex-1" onClick={handleSaveRecord} loading={saving}>Salvar</Button>
               </div>
             </motion.div>
           </motion.div>
@@ -1032,7 +1529,7 @@ export default function AdminPage() {
               <div className="flex items-center justify-between p-5 border-b">
                 <div>
                   <h2 className="text-lg font-bold text-franca-blue">Editar Registro</h2>
-                  <p className="text-xs text-gray-500">{formatMonthYear(editingRecord.month, editingRecord.year)}</p>
+                  <p className="text-sm text-gray-500">{formatMonthYear(editingRecord.month, editingRecord.year)}</p>
                 </div>
                 <button onClick={closeModal} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
                   <X className="w-5 h-5" />

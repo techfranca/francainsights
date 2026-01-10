@@ -52,10 +52,29 @@ export async function GET(request: NextRequest) {
     const clientsWithMetrics = clients?.map((client) => {
       const records = client.monthly_records || []
       const totalRevenue = records.reduce((sum: number, r: any) => sum + (r.revenue || 0), 0)
-      const lastRecord = records.sort((a: any, b: any) => {
+      
+      // Ordena por data (mais recente primeiro) para pegar o último registro
+      const sortedDesc = [...records].sort((a: any, b: any) => {
         if (a.year !== b.year) return b.year - a.year
         return b.month - a.month
-      })[0]
+      })
+      const lastRecord = sortedDesc[0]
+
+      // Calcula crescimento individual (apenas se tiver 2+ registros)
+      let growth_percent: number | null = null
+      if (records.length >= 2) {
+        // Ordena por data (mais antigo primeiro)
+        const sortedAsc = [...records].sort((a: any, b: any) => {
+          if (a.year !== b.year) return a.year - b.year
+          return a.month - b.month
+        })
+        const firstRecord = sortedAsc[0]
+        const latestRecord = sortedAsc[sortedAsc.length - 1]
+        
+        if (firstRecord.revenue > 0) {
+          growth_percent = ((latestRecord.revenue - firstRecord.revenue) / firstRecord.revenue) * 100
+        }
+      }
 
       return {
         ...client,
@@ -63,6 +82,7 @@ export async function GET(request: NextRequest) {
         total_revenue: totalRevenue,
         last_record: lastRecord ? `${lastRecord.month}/${lastRecord.year}` : null,
         monthly_access_count: accessByClient[client.id] || 0,
+        growth_percent,
         monthly_records: undefined,
       }
     })
